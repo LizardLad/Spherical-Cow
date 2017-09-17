@@ -118,10 +118,11 @@ class Handler:
 		alpha = alpha_Scale.get_value()
 	
 	def onDestroySettingsWindow(self, *args):
-		window2.destroy()
+		window2.hide()
+		return True
 	
 	def SettingsWindow(self, *args):
-		window2.show_all()
+		window2.show()
 		
 	def on_Cam_Same_toggled(self, *args):
 		global Same_Cam
