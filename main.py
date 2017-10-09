@@ -15,7 +15,7 @@ gi.require_version('Gtk', '3.0')
 from gi.repository import Gtk, Gdk, GLib, GdkPixbuf
 
 builder = Gtk.Builder()
-builder.add_from_file("3dspos.glade")
+builder.add_from_file("3dpos.glade")
 
 configFilesOpened = False
 
