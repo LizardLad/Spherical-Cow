@@ -9,6 +9,11 @@ import numpy as np
 import Coordinate_Calculations
 import colorDetector
 
+# Stuff needed to get it to work with vridge/riftcat.
+import zmq, json, time, sys, struct
+from collections import namedtuple
+from construct import Int32ub, Int32ul, Float32l, Struct, Const, Padded, Array
+
 signal.signal(signal.SIGINT, signal.SIG_DFL)
 
 gi.require_version('Gtk', '3.0')
@@ -244,6 +249,43 @@ Value_Max_Scale.set_value(Value_Max)
 X_SCREEN_DEPTH = Coordinate_Calculations.screen_depth(640, Cam_H_FOV)
 Y_SCREEN_DEPTH = Coordinate_Calculations.screen_depth(480, Cam_V_FOV)
 
+#All this class does is prints messages to the screen so you can see what going on.
+class debug: 
+    def __init__(self, socket):
+        self.socket = socket
+        
+    def send(self, text):
+        self.socket.send(text)
+        print("Send: " + str(text))
+
+    def recv(self):
+        recieved = self.socket.recv()
+        print("Recived: " + str(recieved))
+        return recieved
+
+# Setup some fancy ZMQ socket stuff and connect to the vridge api
+context = zmq.Context()
+control_channel = context.socket(zmq.REQ)
+control_channel.connect("tcp://127.0.0.1:38219")
+# First you connect to a control channel (setting up debug class)
+vridge_control = debug(control_channel)
+
+# Say hi (this doesnt do anything just confirms everything works. Acknowledgement packet)
+vridge_control.send('{"ProtocolVersion":1,"Code":2}')
+vridge_control.recv()
+
+# Request special connection for head tracking stuff
+vridge_control.send('{"RequestedEndpointName":"HeadTracking","ProtocolVersion":1,"Code":1}')
+newconnection = json.loads(vridge_control.recv())
+#vridge_control.close() # Close socket
+
+# Connect to new socket (timeout is normally 15 seconds)
+endpoint_address = newconnection['EndpointAddress']
+endpoint = context.socket(zmq.REQ)
+endpoint.connect(endpoint_address)
+# Connect to the endpoint channel (setting up debug class)
+vridge_endpoint = debug(endpoint)
+
 def show_frame(*args):
 	global Color_Min, Color_Max
 	Color_Min = (Hue_Min, Saturation_Min, Value_Min)
@@ -271,7 +313,27 @@ def show_frame(*args):
 			YY = Coordinate_Calculations.y_coord(THETA_AY, THETA_BY, LAY, LBY)
 			ZY = Coordinate_Calculations.z_coord(CAMERA_ANGLE_YY1, YY, CAMERA_ANGLE_YY2, YY)
 			#End Calculating Coordinates
-			#print(XY, YY, ZY)
+			
+			
+			# Start sending information to Vridge
+			print(XY, YY, ZY)
+			# Specify the structure for the fancy position matrix
+			structure = Struct(
+				Const(Int32ul, 2),
+				Const(Int32ul, 5),
+				Const(Int32ul, 24),
+				"data" / Padded(64, Array(3, Float32l)),
+			)
+			
+			offset = [0.0, 0.0, 0.0] # offset in case you want to define where the origin is (in centimeters)
+			xyz = [(XY + offset[0]) / 100, (YY + offset[1]) / 100, (ZY + offset[2]) / 100] # Steam VR requires this information in meters
+			byte_packet = structure.build(dict(data=xyz))
+			endpoint.send(byte_packet)
+			print("Send: " + str(structure.parse(byte_packet)))
+            endpoint.recv()   
+            # Stop sending information to vridge 
+			
+			
 			#Start Drawing Contours
 			for (i, c) in enumerate(cntsy):
 				# draw the contour
@@ -324,5 +386,69 @@ def show_frame(*args):
 	image.set_from_pixbuf(pb.copy())
 	return True
 
+
 GLib.idle_add(show_frame)
 Gtk.main()
+
+
+##Oh hi there, I'm the crazy haired blond volunteer who was talking to you about this
+##project at the young ict explorers. Congrats for winning first! This was
+##my first time volunteering there and it was a lot more amazing than I
+##thought it would be. On Sunday the grades 5-6 had some really interesting
+##projects as well. When I competed in 2014 I didn't get to look at everybody
+##else's in as much depth as this year so it was really good to be able to
+##spend the time to talk to students about what they made.
+##
+##Thanks for giving me a link to your github code, I thought a really cool
+##use of this code would be for things where you sit at the computer and
+##could use a position tracker like a flight simulator in VR. I don't
+##have the kind of money to buy an oculus rift or HTC vive so I wanted to
+##create my own VR setup. I know theres this piece of software called
+##Vridge made by Riftcat where you can play VR games on your computer and
+##they get steamed to your phone via wifi (to be used with a VR headset). 
+##The only problem is that it only translates rotational information from 
+##your phone, and can't get position information. 
+##So I thought if you used this program to get the position
+##info it would do pretty good as a DIY vive. Sadly I don't have 2 identical
+##webcams to test with but this code should (probably) work. When you
+##download/install Vridge, make sure you set it to the beta version as this
+##software uses the API which is only available in the beta version. 
+##
+##You will have to install a few modules first before you get it to work,
+##that shouldn't be too hard. I think I just got them from pip install or
+##they were already there installed by default. The video I (tried) to show
+##you is https://youtu.be/1FYMBoXsBbE where I was able to use 2 PS3Eye
+##cameras to do position tracking and parse that information to SteamVR,
+##but as you can see its very slow and clearly has bottlenecks. The problem
+##with the PS3Eye cameras is that the windows drivers only allow 1 camera
+##to be detected and can be used, meaning if I plugged 2 cameras in it 
+##ignores the second one. So sadly I couldn't get it working that way.
+##I have a .dll that allows PS3Eye multiple cameras to work, but it's
+##very difficult to try and get dll's made for C++/C# to work with opencv
+##and python.
+##
+##I took your suggestion about Linux's video API potentially having
+##compatible drivers and to my suprise both the latest versions of Ubuntu
+##and Fedora seem to support multiple PS3 eye cameras. I thought I tested
+##on ubuntu before and it didn't work. Oh well. However when running
+##your code I ran into issues when getting the PS3 cameras to work inside
+##python using opencv. Nothing to do with your code, it's that 
+##cv2.VideoCapture is returning no frames (I believe it returns None).
+##
+##I would one day like to be able to use a set of Wii remotes in place of
+##vive controllers, I was thinking about using an arduino with an 8266 wifi
+##board with a gyroscope/accellerometer with an IR ball, which would be
+##pretty cool I think. If you have a look on my github/BoomBrush/VRTracker
+## page you'll see that i've uploaded a version of my tracker code. It's
+## designed to work with a piece of software made by somebody else that
+## computes the 3D position, but the way it works is way to complex to
+## explain here.
+##
+##Look, theres a lot more I could have talked about on the day but I kinda
+##ran out of time and this is getting a bit long. If it's cool with you
+##and your parents (due to the age different, I am 18) shoot me an email
+##and we can continue this discussion. Chao.
+##
+##boombrush [@] hotmail [.dot] com
+##
+##- Scott Howie
